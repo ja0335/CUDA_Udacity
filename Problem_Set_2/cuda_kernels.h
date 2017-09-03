@@ -3,6 +3,9 @@
 
 #include <SFML/Graphics.hpp>
 
+#include "cuda.h"
+#include "cuda_runtime.h"
+
 enum class eHostDeviceCopyOperation
 {
     HostToDevice,
@@ -13,12 +16,12 @@ void CUDADeviceQuery();
 
 void CUDAInitDevice();
 
-void CreateAndSetDeviceData(sf::Uint8 *d_Data, const size_t SizeOfData);
+void CreateAndSetDeviceData(sf::Uint8 *d_Data, const int SizeOfData);
 
-void HostDeviceCopyOperation(void * h_Data, void * d_Data, const size_t SizeOfData, const eHostDeviceCopyOperation operation);
+void HostDeviceCopyOperation(void * h_Data, void * d_Data, const int SizeOfData, const eHostDeviceCopyOperation operation);
 
-void DeviceFreeData(void *h_Data);
+void CUDAFillPixels(uchar4 *d_Pixels, const int ImgWidth, const int ImgHeight);
 
-void CUDAFillPixels(sf::Uint8 *d_Pixels, const size_t ImgWidth, const size_t ImgHeight);
+void GaussianBlur(uchar4* d_ImageRGBA, int ImageWidht, int ImageHeight);
 
 #endif // CUDA_KERNELS_H

@@ -15,11 +15,17 @@ using namespace sf;
 int main(int argc, char **argv)
 {
     RenderWindow window(VideoMode(1024, 768), "Navier Stokes");
+
+	Image SourceImage;
+
+	if (!SourceImage.loadFromFile("../img/source.png"))
+		return EXIT_FAILURE;
+	
 	Texture DynamicTexture;
 	Sprite SpriteDynamicTexture;
 
-	Uint64 ImageWidht = 640;
-	Uint64 ImageHeight = 480;
+	Uint64 ImageWidht = SourceImage.getSize().x;
+	Uint64 ImageHeight = SourceImage.getSize().y;
 
 	if (!DynamicTexture.create(ImageWidht, ImageHeight))
 		return EXIT_FAILURE;
@@ -30,27 +36,25 @@ int main(int argc, char **argv)
 	// Init Device
     CUDADeviceQuery();
 	CUDAInitDevice();
-
+	
 	// Host data buffers
-	Uint64 PixelsBufferSize = ImageWidht * ImageHeight * 4 * sizeof(Uint8);
-	Uint8* Pixels = new Uint8[PixelsBufferSize];	
-	memset(Pixels, 100, PixelsBufferSize);
+	Uint64 PixelsBufferSize = ImageWidht * ImageHeight * sizeof(uchar4);
+	uchar4* Pixels = new uchar4[PixelsBufferSize];
+	memcpy(Pixels, SourceImage.getPixelsPtr(), PixelsBufferSize);
+	
 
 	// Device data buffers
-	Uint8* d_Pixels;
-	cudaMalloc((void **)&d_Pixels, PixelsBufferSize);
+	uchar4* d_Pixels; cudaMalloc((void **)&d_Pixels, PixelsBufferSize);
 
 	// Copy host to device
 	HostDeviceCopyOperation(Pixels, d_Pixels, PixelsBufferSize, eHostDeviceCopyOperation::HostToDevice);
 
-	CUDAFillPixels(d_Pixels, ImageWidht, ImageHeight);
+	GaussianBlur(d_Pixels, ImageWidht, ImageHeight);
 
 	// Copy device to host
-	//std::cout << "Value: " << static_cast<size_t>(Pixels[0]) << std::endl;
 	HostDeviceCopyOperation(Pixels, d_Pixels, PixelsBufferSize, eHostDeviceCopyOperation::DeviceToHost);
-	//std::cout << "Value: " << static_cast<size_t>(Pixels[0]) << std::endl;
 
-	DeviceFreeData(d_Pixels);
+	cudaFree(d_Pixels);
 
     while (window.isOpen())
 	{
@@ -62,7 +66,11 @@ int main(int argc, char **argv)
 				window.close();
         }
 
-		DynamicTexture.update(Pixels);
+		window.clear(Color::White);
+		DynamicTexture.update(reinterpret_cast<Uint8*>(Pixels));
+		SpriteDynamicTexture.setPosition(
+			window.getSize().x *0.5f - DynamicTexture.getSize().x * 0.5f,
+			window.getSize().y *0.5f - DynamicTexture.getSize().y * 0.5f);
 		window.draw(SpriteDynamicTexture);
 
 		// end the current frame

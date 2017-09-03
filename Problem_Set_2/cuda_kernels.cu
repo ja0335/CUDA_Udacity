@@ -1,15 +1,13 @@
 #include "cuda_kernels.h"
-
-#include "cuda.h"
-#include "cuda_runtime.h"
-
 #include <iostream>
 #include <math.h>
 #include <algorithm>
 #include <SFML/Graphics.hpp>
 
-#include "cuda_kernels.h"
 #include "Macros.h"
+#include "device_functions.hpp"
+
+using namespace sf;
 
 cudaDeviceProp g_CudaDeviceProp;
 
@@ -149,7 +147,7 @@ inline const char * GetCUDAError()
 	return cudaGetErrorString( err );
 }
 
-void CreateAndSetDeviceData(sf::Uint8 *d_Data, const size_t SizeOfData)
+void CreateAndSetDeviceData(Uint8 *d_Data, const int SizeOfData)
 {
 	if ( cudaSuccess != cudaMalloc((void **)&d_Data, SizeOfData) )
     	printf( "Error in cudaMalloc. %s!\n", GetCUDAError() );
@@ -157,7 +155,7 @@ void CreateAndSetDeviceData(sf::Uint8 *d_Data, const size_t SizeOfData)
 		printf("Error in cudaMemset. %s!\n", GetCUDAError());
 }
 
-void HostDeviceCopyOperation(void * h_Data, void * d_Data, size_t SizeOfData, const eHostDeviceCopyOperation operation)
+void HostDeviceCopyOperation(void * h_Data, void * d_Data, int SizeOfData, const eHostDeviceCopyOperation operation)
 {
 	if (operation == eHostDeviceCopyOperation::HostToDevice)
 	{
@@ -171,45 +169,215 @@ void HostDeviceCopyOperation(void * h_Data, void * d_Data, size_t SizeOfData, co
 	}
 }
 
-void DeviceFreeData(void *h_Data)
-{
-	cudaFree(h_Data);
-}
-
-__global__ void kernel_FillPixels(unsigned char * Pixels, const int ImgWidth, const int ImgHeight)
+//===================================================================================================
+__global__ void kernel_FillPixels(uchar4 * Pixels, const int ImgWidth, const int ImgHeight)
 {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 	int j = blockDim.y * blockIdx.y + threadIdx.y;
 
-	//printf("%i, %i, %i = %i\n", blockDim.y, blockIdx.y, threadIdx.y, j);
     if(i >= ImgWidth || j >= ImgHeight)
         return;
 
-	int Idx = (j * ImgWidth + i) * 4;
+	int Idx = j * ImgWidth + i;
 	
-	Pixels[Idx + 0] = 255;
-	Pixels[Idx + 1] = 255;
-	Pixels[Idx + 2] = 255;
-	Pixels[Idx + 3] = 255;
+	Pixels[Idx].x = 255;
+	Pixels[Idx].y = 0;
+	Pixels[Idx].z = 255;
+	Pixels[Idx].w = 255;
 }
 
-void CUDAFillPixels(sf::Uint8 *d_Pixels, const size_t ImgWidth, const size_t ImgHeight)
+void GetGridDimAndBlockDim(dim3& GridDim, dim3& BlockDim, const int ImgWidth, const int ImgHeight)
 {
-	size_t BlockSize = sqrt(g_CudaDeviceProp.maxThreadsPerBlock);
+	int BlockSize = static_cast<int>(sqrt(g_CudaDeviceProp.maxThreadsPerBlock));
 
-	size_t NumBlocksX = ceil(ImgWidth / static_cast<Real>(BlockSize));
-	size_t NumBlocksY = ceil(ImgHeight / static_cast<Real>(BlockSize));
+	int NumBlocksX = ceil(ImgWidth / static_cast<Real>(BlockSize));
+	int NumBlocksY = ceil(ImgHeight / static_cast<Real>(BlockSize));
 	//We need at least 1 block
 	NumBlocksX = (NumBlocksX == 0) ? 1 : NumBlocksX;
 	NumBlocksY = (NumBlocksY == 0) ? 1 : NumBlocksY;
 
-	dim3 GridDim(NumBlocksX, NumBlocksY, 1);
-	dim3 BlockDim(BlockSize, BlockSize, 1);
+	GridDim = dim3(NumBlocksX, NumBlocksY, 1);
+	BlockDim = dim3(BlockSize, BlockSize, 1);
+}
+void CUDAFillPixels(uchar4 *d_Pixels, const int ImgWidth, const int ImgHeight)
+{
+	dim3 GridDim, BlockDim;
+	GetGridDimAndBlockDim(GridDim, BlockDim, ImgWidth, ImgHeight);
 
 	kernel_FillPixels << < GridDim, BlockDim >> >(d_Pixels, ImgWidth, ImgHeight);
 
 	if ( cudaSuccess != cudaGetLastError() )
-    	printf( "Error in kernel_FillPixels. %s!\n", GetCUDAError() );
+    	printf( "Error in kernel_FillPixels! %s\n", GetCUDAError() );
 
 	cudaDeviceSynchronize();
+}
+
+//===================================================================================================
+//This kernel takes in an image represented as a uchar4 and splits
+//it into three images consisting of only one color channel each
+__global__
+void separateChannels(const uchar4* inputImageRGBA,
+	int numRows,
+	int numCols,
+	unsigned char* redChannel,
+	unsigned char* greenChannel,
+	unsigned char* blueChannel)
+{
+	const int i = blockIdx.x * blockDim.x + threadIdx.x;
+	const int j = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (i >= numCols || j >= numRows)
+		return;
+
+	const int Idx = i + j * numCols;
+	const uchar4 rgba = inputImageRGBA[Idx];
+
+	redChannel[Idx]		= rgba.x;
+	greenChannel[Idx]	= rgba.y;
+	blueChannel[Idx]	= rgba.z;
+}
+
+//===================================================================================================
+//This kernel takes in three color channels and recombines them
+//into one image.  The alpha channel is set to 255 to represent
+//that this image has no transparency.
+__global__
+void recombineChannels(const unsigned char* const redChannel,
+	const unsigned char* const greenChannel,
+	const unsigned char* const blueChannel,
+	uchar4* const outputImageRGBA,
+	int numRows,
+	int numCols)
+{
+	const int2 thread_2D_pos = make_int2(blockIdx.x * blockDim.x + threadIdx.x,
+		blockIdx.y * blockDim.y + threadIdx.y);
+
+	const int thread_1D_pos = thread_2D_pos.y * numCols + thread_2D_pos.x;
+
+	//make sure we don't try and access memory outside the image
+	//by having any threads mapped there return early
+	if (thread_2D_pos.x >= numCols || thread_2D_pos.y >= numRows)
+		return;
+
+	unsigned char red = redChannel[thread_1D_pos];
+	unsigned char green = greenChannel[thread_1D_pos];
+	unsigned char blue = blueChannel[thread_1D_pos];
+
+	//Alpha should be 255 for no transparency
+	uchar4 outputPixel = make_uchar4(red, green, blue, 255);
+
+	outputImageRGBA[thread_1D_pos] = outputPixel;
+}
+
+//===================================================================================================
+__global__
+void gaussian_blur(
+	const unsigned char* const inputChannel,
+	unsigned char* const outputChannel,
+	int numRows, int numCols,
+	const float* const filter, const int filterWidth)
+{
+	const int i = blockIdx.x * blockDim.x + threadIdx.x;
+	const int j = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (i >= numCols || j >= numRows)
+		return;
+
+	const int Idx = j * numCols + i;
+	float Result = 0;
+	
+	for (int x = 0, int s = -filterWidth / 2; s <= filterWidth / 2; ++x, ++s)
+	{
+		for (int y = 0, int t = -filterWidth / 2; t <= filterWidth / 2; ++y, ++t)
+		{
+			int n_i = max(0, min(numCols-1, i + s));
+			int n_j = max(0, min(numRows-1, j + t));
+			
+			const int NeighBourIdx = n_j * numCols + n_i;
+			const int FilterIdx = y * filterWidth + x;
+			Result += inputChannel[NeighBourIdx] * filter[FilterIdx];
+		}
+	}
+
+	outputChannel[Idx] = Result;
+}
+
+void SetFilter(float *h_filter, const int blurKernelWidth)
+{
+	const float blurKernelSigma = 2.;
+
+	// fill the filter we will convolve with
+
+	float filterSum = 0.f; //for normalization
+
+	for (int r = -blurKernelWidth / 2; r <= blurKernelWidth / 2; ++r) {
+		for (int c = -blurKernelWidth / 2; c <= blurKernelWidth / 2; ++c) {
+			float filterValue = expf(-(float)(c * c + r * r) / (2.f * blurKernelSigma * blurKernelSigma));
+			(h_filter)[(r + blurKernelWidth / 2) * blurKernelWidth + c + blurKernelWidth / 2] = filterValue;
+			filterSum += filterValue;
+		}
+	}
+
+	float normalizationFactor = 1.f / filterSum;
+
+	for (int r = -blurKernelWidth / 2; r <= blurKernelWidth / 2; ++r) {
+		for (int c = -blurKernelWidth / 2; c <= blurKernelWidth / 2; ++c) {
+			(h_filter)[(r + blurKernelWidth / 2) * blurKernelWidth + c + blurKernelWidth / 2] *= normalizationFactor;
+		}
+	}
+}
+
+void GaussianBlur(uchar4* d_ImageRGBA, int ImageWidht, int ImageHeight)
+{
+	Uint64 ChannelBufferSize = ImageWidht * ImageHeight * sizeof(Uint8);
+	Uint8* d_redChannelIn;		cudaMalloc((void **)&d_redChannelIn, ChannelBufferSize);
+	Uint8* d_redChannelOut;	cudaMalloc((void **)&d_redChannelOut, ChannelBufferSize);
+
+	Uint8* d_greenChannelIn;	cudaMalloc((void **)&d_greenChannelIn, ChannelBufferSize);
+	Uint8* d_greenChannelOut;	cudaMalloc((void **)&d_greenChannelOut, ChannelBufferSize);
+
+	Uint8* d_blueChannelIn;		cudaMalloc((void **)&d_blueChannelIn, ChannelBufferSize);
+	Uint8* d_blueChannelOut;	cudaMalloc((void **)&d_blueChannelOut, ChannelBufferSize);
+
+	dim3 GridDim, BlockDim;
+	GetGridDimAndBlockDim(GridDim, BlockDim, ImageWidht, ImageHeight);
+
+	separateChannels << < GridDim, BlockDim >> >(d_ImageRGBA, ImageHeight, ImageWidht, d_redChannelIn, d_greenChannelIn, d_blueChannelIn);
+	if (cudaSuccess != cudaGetLastError()) printf("Error in kernel separateChannels! Error: %s\n", GetCUDAError());
+	cudaDeviceSynchronize();
+	
+	//now create the filter that they will use
+	const int blurKernelWidth = 9;
+	float *h_filter = new float[blurKernelWidth * blurKernelWidth];
+	SetFilter(h_filter, blurKernelWidth);
+
+	float *d_filter;
+	cudaMalloc((void**)&d_filter, blurKernelWidth * blurKernelWidth * sizeof(float));
+	HostDeviceCopyOperation(h_filter, d_filter, blurKernelWidth * blurKernelWidth * sizeof(float), eHostDeviceCopyOperation::HostToDevice);
+
+	gaussian_blur << < GridDim, BlockDim >> >(d_redChannelIn, d_redChannelOut, ImageHeight, ImageWidht, d_filter, blurKernelWidth);
+	if (cudaSuccess != cudaGetLastError()) printf("Error in kernel gaussian_blur! Error: %s\n", GetCUDAError());
+	cudaDeviceSynchronize();
+
+	gaussian_blur << < GridDim, BlockDim >> >(d_greenChannelIn, d_greenChannelOut, ImageHeight, ImageWidht, d_filter, blurKernelWidth);
+	if (cudaSuccess != cudaGetLastError()) printf("Error in kernel gaussian_blur! Error: %s\n", GetCUDAError());
+	cudaDeviceSynchronize();
+
+	gaussian_blur << < GridDim, BlockDim >> >(d_blueChannelIn, d_blueChannelOut, ImageHeight, ImageWidht, d_filter, blurKernelWidth);
+	if (cudaSuccess != cudaGetLastError()) printf("Error in kernel gaussian_blur! Error: %s\n", GetCUDAError());
+	cudaDeviceSynchronize();
+
+	recombineChannels << < GridDim, BlockDim >> >(d_redChannelOut, d_greenChannelOut, d_blueChannelOut, d_ImageRGBA, ImageHeight, ImageWidht);
+	//recombineChannels << < GridDim, BlockDim >> >(d_redChannelIn, d_greenChannelIn, d_blueChannelIn, d_ImageRGBA, ImageHeight, ImageWidht);
+	
+	if (cudaSuccess != cudaGetLastError()) printf("Error in kernel recombineChannels! Error: %s\n", GetCUDAError());
+	cudaDeviceSynchronize();
+
+	cudaFree(d_filter);
+	cudaFree(d_redChannelIn);
+	cudaFree(d_redChannelOut);
+	cudaFree(d_greenChannelIn);
+	cudaFree(d_greenChannelOut);
+	cudaFree(d_blueChannelIn);
+	cudaFree(d_blueChannelOut);
 }

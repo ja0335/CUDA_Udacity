@@ -34,3 +34,6 @@
 # Visual Studio things
 *.opensdf
 *.sdf
+
+# Cuda things
+*.deps
