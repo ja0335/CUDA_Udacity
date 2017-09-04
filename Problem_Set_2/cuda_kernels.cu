@@ -11,6 +11,7 @@ using namespace sf;
 
 cudaDeviceProp g_CudaDeviceProp;
 
+extern int g_FilterWidth;
 
 void CUDADeviceQuery()
 {
@@ -312,7 +313,8 @@ void gaussian_blur(
 
 void SetFilter(float *h_filter, const int blurKernelWidth)
 {
-	const float blurKernelSigma = 2.;
+	//const float blurKernelSigma = 2.;
+	const float blurKernelSigma = blurKernelWidth / 4.0f;
 
 	// fill the filter we will convolve with
 
@@ -355,7 +357,7 @@ void GaussianBlur(uchar4* d_ImageRGBA, int ImageWidht, int ImageHeight)
 	cudaDeviceSynchronize();
 	
 	//now create the filter that they will use
-	const int blurKernelWidth = 9;
+	const int blurKernelWidth = g_FilterWidth;
 	float *h_filter = new float[blurKernelWidth * blurKernelWidth];
 	SetFilter(h_filter, blurKernelWidth);
 

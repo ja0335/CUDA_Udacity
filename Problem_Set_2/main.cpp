@@ -12,8 +12,20 @@
 
 using namespace sf;
 
+extern int g_FilterWidth = 9;
+
 int main(int argc, char **argv)
 {
+	for (int i = 0 ; i < argc; ++i)
+	{
+		const char * Param = argv[i];
+
+		if (strcmp("-fw", argv[i]) == 0)
+		{
+			g_FilterWidth = i + 1 < argc ? atoi(argv[i + 1]) : g_FilterWidth;
+		}
+	}
+
     RenderWindow window(VideoMode(1024, 768), "Navier Stokes");
 
 	Image SourceImage;
@@ -66,7 +78,7 @@ int main(int argc, char **argv)
 				window.close();
         }
 
-		window.clear(Color::White);
+		window.clear(Color::Black);
 		DynamicTexture.update(reinterpret_cast<Uint8*>(Pixels));
 		SpriteDynamicTexture.setPosition(
 			window.getSize().x *0.5f - DynamicTexture.getSize().x * 0.5f,
