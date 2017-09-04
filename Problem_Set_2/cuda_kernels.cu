@@ -286,17 +286,25 @@ void gaussian_blur(
 	const int Idx = j * numCols + i;
 	float Result = 0;
 	
-	for (int x = 0, int s = -filterWidth / 2; s <= filterWidth / 2; ++x, ++s)
+	int x = 0;
+
+	for (int s = -filterWidth / 2; s <= filterWidth / 2; ++s)
 	{
-		for (int y = 0, int t = -filterWidth / 2; t <= filterWidth / 2; ++y, ++t)
+		int y = 0;
+
+		for (int t = -filterWidth / 2; t <= filterWidth / 2; ++t)
 		{
-			int n_i = max(0, min(numCols-1, i + s));
-			int n_j = max(0, min(numRows-1, j + t));
-			
+			int n_i = max(0, min(numCols - 1, i + s));
+			int n_j = max(0, min(numRows - 1, j + t));
+
 			const int NeighBourIdx = n_j * numCols + n_i;
 			const int FilterIdx = y * filterWidth + x;
 			Result += inputChannel[NeighBourIdx] * filter[FilterIdx];
+
+			++y;
 		}
+
+		++x;
 	}
 
 	outputChannel[Idx] = Result;
