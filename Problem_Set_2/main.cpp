@@ -18,36 +18,37 @@ int main(int argc, char **argv)
 	Texture DynamicTexture;
 	Sprite SpriteDynamicTexture;
 
-	if (!DynamicTexture.create(PLOT_RESOLUTION, PLOT_RESOLUTION))
+	Uint64 ImageWidht = 640;
+	Uint64 ImageHeight = 480;
+
+	if (!DynamicTexture.create(ImageWidht, ImageHeight))
 		return EXIT_FAILURE;
 
 	SpriteDynamicTexture.setTexture(DynamicTexture);
 	DynamicTexture.setSmooth(false);
 
 	// Init Device
-    //CUDADeviceQuery();
+    CUDADeviceQuery();
 	CUDAInitDevice();
 
 	// Host data buffers
-	Uint64 PixelsBufferSize = PLOT_RESOLUTION * PLOT_RESOLUTION * 4 * sizeof(Uint8);
+	Uint64 PixelsBufferSize = ImageWidht * ImageHeight * 4 * sizeof(Uint8);
 	Uint8* Pixels = new Uint8[PixelsBufferSize];	
-	memset(Pixels, 10, PixelsBufferSize);
+	memset(Pixels, 100, PixelsBufferSize);
 
 	// Device data buffers
-	Uint8* d_Pixels; 
-	//CreateAndSetDeviceData(d_Pixels, PixelsBufferSize);
+	Uint8* d_Pixels;
 	cudaMalloc((void **)&d_Pixels, PixelsBufferSize);
-	cudaMemset(d_Pixels, 13, PixelsBufferSize);
 
 	// Copy host to device
 	HostDeviceCopyOperation(Pixels, d_Pixels, PixelsBufferSize, eHostDeviceCopyOperation::HostToDevice);
 
-	CUDAFillPixels(d_Pixels, PLOT_RESOLUTION, PLOT_RESOLUTION);
+	CUDAFillPixels(d_Pixels, ImageWidht, ImageHeight);
 
 	// Copy device to host
-	std::cout << "Value: " << static_cast<size_t>(Pixels[0]) << std::endl;
+	//std::cout << "Value: " << static_cast<size_t>(Pixels[0]) << std::endl;
 	HostDeviceCopyOperation(Pixels, d_Pixels, PixelsBufferSize, eHostDeviceCopyOperation::DeviceToHost);
-	std::cout << "Value: " << static_cast<size_t>(Pixels[0]) << std::endl;
+	//std::cout << "Value: " << static_cast<size_t>(Pixels[0]) << std::endl;
 
 	DeviceFreeData(d_Pixels);
 

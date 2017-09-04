@@ -153,8 +153,8 @@ void CreateAndSetDeviceData(sf::Uint8 *d_Data, const size_t SizeOfData)
 {
 	if ( cudaSuccess != cudaMalloc((void **)&d_Data, SizeOfData) )
     	printf( "Error in cudaMalloc. %s!\n", GetCUDAError() );
-	// if ( cudaSuccess != cudaMemset(d_Data, 13, SizeOfData) )
-    // 	printf( "Error in cudaMemset. %s!\n", GetCUDAError() );
+	if (cudaSuccess != cudaMemset(d_Data, 13, SizeOfData))
+		printf("Error in cudaMemset. %s!\n", GetCUDAError());
 }
 
 void HostDeviceCopyOperation(void * h_Data, void * d_Data, size_t SizeOfData, const eHostDeviceCopyOperation operation)
@@ -176,32 +176,38 @@ void DeviceFreeData(void *h_Data)
 	cudaFree(h_Data);
 }
 
-__global__ void kernel_FillPixels(unsigned char * Pixels, const size_t ImgWidth, const size_t ImgHeight)
+__global__ void kernel_FillPixels(unsigned char * Pixels, const int ImgWidth, const int ImgHeight)
 {
-    size_t i = blockDim.x * blockIdx.x + threadIdx.x;
-	size_t j = blockDim.y * blockIdx.y + threadIdx.y;
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+	int j = blockDim.y * blockIdx.y + threadIdx.y;
 
-
+	//printf("%i, %i, %i = %i\n", blockDim.y, blockIdx.y, threadIdx.y, j);
     if(i >= ImgWidth || j >= ImgHeight)
         return;
 
-	size_t Idx = j * ImgWidth + i;
-
-	printf("%i", Pixels[Idx]);
-    Pixels[Idx] = 255;
+	int Idx = (j * ImgWidth + i) * 4;
+	
+	Pixels[Idx + 0] = 255;
+	Pixels[Idx + 1] = 255;
+	Pixels[Idx + 2] = 255;
+	Pixels[Idx + 3] = 255;
 }
 
 void CUDAFillPixels(sf::Uint8 *d_Pixels, const size_t ImgWidth, const size_t ImgHeight)
 {
-	size_t Lenght = std::max(ImgWidth, ImgHeight);
+	size_t BlockSize = sqrt(g_CudaDeviceProp.maxThreadsPerBlock);
 
-	size_t NumBlocks = ceil((Lenght * Lenght) / static_cast<Real>(g_CudaDeviceProp.maxThreadsPerBlock));
+	size_t NumBlocksX = ceil(ImgWidth / static_cast<Real>(BlockSize));
+	size_t NumBlocksY = ceil(ImgHeight / static_cast<Real>(BlockSize));
 	//We need at least 1 block
-	NumBlocks = (NumBlocks == 0) ? 1 : NumBlocks;
+	NumBlocksX = (NumBlocksX == 0) ? 1 : NumBlocksX;
+	NumBlocksY = (NumBlocksY == 0) ? 1 : NumBlocksY;
 
-	dim3 ThreadsPerBlock(sqrt(g_CudaDeviceProp.maxThreadsPerBlock), sqrt(g_CudaDeviceProp.maxThreadsPerBlock));
+	dim3 GridDim(NumBlocksX, NumBlocksY, 1);
+	dim3 BlockDim(BlockSize, BlockSize, 1);
 
-	kernel_FillPixels <<< NumBlocks, ThreadsPerBlock >>>(d_Pixels, ImgWidth, ImgHeight);
+	kernel_FillPixels << < GridDim, BlockDim >> >(d_Pixels, ImgWidth, ImgHeight);
+
 	if ( cudaSuccess != cudaGetLastError() )
     	printf( "Error in kernel_FillPixels. %s!\n", GetCUDAError() );
 
